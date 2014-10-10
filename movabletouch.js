@@ -6,7 +6,7 @@ global_object['MovableTouch'] = (function () {
 var Movable = global_object.Movable;
 
 var MovableTouch = function () {
-	// Touch-richer variant of Movable. Requires hammer.js.
+	// Touch-richer variant of Movable. Requires hammer.js>=2.0.2.
 	Movable.apply(this, arguments);
 	// Default key and touch maps
 	// rolling the view
@@ -26,7 +26,6 @@ var MovableTouch = function () {
 	this.speed[this.touch_map.rotate.which] = 0.001; // Rotate 1 rad/sec
 	this.speed[this.touch_map.pinch.which] = 0.001; // Zoom about 4x/sec
 	// Status variables
-	this.last_hammer_event = null;
 	this.is_hammer_busy = false;
 	this.zoom_center = null;
 	this.cos = 1;
@@ -43,6 +42,7 @@ MovableTouch.prototype = Object.create(Movable.prototype);
 	this.options.pinch = {threshold: 0};
 	this.bindTouch = function (element) {
 		var h = this.hammer;
+		var t = this;
 		if (!this.hammer) {
 			h = this.hammer = new Hammer.Manager($(element)[0]);
 			h.add(new Hammer.Pan(this.options.pan));
@@ -50,38 +50,37 @@ MovableTouch.prototype = Object.create(Movable.prototype);
 				).recognizeWith(h.get('pan')));
 			h.add(new Hammer.Pinch(this.options.pinch
 				).recognizeWith([h.get('pan'), h.get('rotate')]));
+			h.on('hammer.input', function (e) {
+				var prev = h.session.prevInput || e;
+				e.incTime = e.deltaTime - prev.deltaTime;
+				e.incX = e.deltaX - prev.deltaX;
+				e.incY = e.deltaY - prev.deltaY;
+				e.incScale = (e.scale / prev.scale) || 1.0;
+				// Clamp incremental rotations to [-90, 90];
+				// interpret obtuse rotations as swapped fingers.
+				var rot = (450 + e.rotation - prev.rotation) % 360 - 90;
+				if (rot > 90) { rot -= 180; }
+				e.incRotation = rot;
+				if (e.isFinal) { t.is_hammer_busy = false; }
+			});
 		}
-		var t = this;
 		this.hammer.on('pan rotate pinch', function (e) {
-			last = t.last_hammer_event || e;
-			// Avoid sudden jumps when a finger is added or removed
-			if (last.pointers.length == e.pointers.length) {
-				var dt = e.deltaTime - last.deltaTime;
-				if (dt) { // Only move if this isn't a duplicate event
-					// Clamp incremental rotations to [-90, 90];
-					// interpret obtuse rotations as swapped fingers.
-					// Incremental scaling is clamped for continuity.
-					var pan_x = e.deltaX - last.deltaX;
-					var pan_y = e.deltaY - last.deltaY;
-					var rot = (540 + e.rotation - last.rotation) % 360 - 180;
-					if (Math.abs(rot) > 90) { rot += 180; }
-					rot = ((180 + rot) % 360 - 180) * Math.PI / 180;
-					var scl = e.scale / last.scale;
-					if (!(scl > 0.1 && scl < 10)) { scl = 1; }
-					// Move
-					t.movePan(pan_x, pan_y);
-					t.moveRotate(rot);
-					t.movePinch(scl);
-					// Set coasting velocities averaging over the last 100ms
-					var weight = Math.min(1, 0.01 * dt);
-					t.touchVelocity('pan_x', pan_x / dt, weight);
-					t.touchVelocity('pan_y', pan_y / dt, weight);
-					t.touchVelocity('rotate', rot / dt, weight);
-					t.touchVelocity('pinch', (scl - 1) / dt, weight);
-				}
+			if (e.incTime) { // Only move if this isn't a duplicate event
+				// Incremental scaling is clamped for continuity.
+				var scl = e.incScale;
+				if (!(scl > 0.1 && scl < 10)) { scl = 1; }
+				// Move
+				t.movePan(e.incX, e.incY);
+				t.moveRotate(e.incRotation);
+				t.movePinch(scl);
+				// Set coasting velocities averaging over the last 100ms
+				var weight = Math.min(1, 0.01 * e.incTime);
+				t.touchVelocity('pan_x', e.incX / e.incTime, weight);
+				t.touchVelocity('pan_y', e.incY / e.incTime, weight);
+				t.touchVelocity('rotate', e.incRotation / e.incTime, weight);
+				t.touchVelocity('pinch', (scl - 1) / e.incTime, weight);
 			}
 			if (!e.isFinal) { t.is_hammer_busy = true; }
-			t.last_hammer_event = e;
 			t.decay_rate = t.decay_coast;
 			t.motionCallback();
 		});
@@ -127,7 +126,6 @@ MovableTouch.prototype = Object.create(Movable.prototype);
 		this.sin = 0;
 	};
 	this.touchEnd = function () {
-		this.last_hammer_event = null;
 		this.is_hammer_busy = false;
 	};
 	this.touchVelocity = function (key, value, weight) {
