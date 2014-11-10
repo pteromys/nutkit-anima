@@ -5,141 +5,199 @@ global_object['MovableTouch'] = (function () {
 
 var Movable = global_object.Movable;
 
-var MovableTouch = function () {
+var Movable2D = function () {
 	// Touch-richer variant of Movable. Requires hammer.js>=2.0.2.
 	Movable.apply(this, arguments);
-	// Default key and touch maps
-	// rolling the view
-	this.key_map[this.KEYS['<']] = {which: 2, amount: -1};
-	this.key_map[this.KEYS['>']] = {which: 2, amount: 1};
-	// zooming (gecko has had some weird keycodes)
-	this.key_map[189] = this.key_map[173] = this.key_map[109] =
-		{which: 3, amount: -1};
-	this.key_map[187] = this.key_map[61] = this.key_map[107] =
-		{which: 3, amount: 1};
-	this.touch_map = {
-		'pan_x': {which: 0, speed: -1},
-		'pan_y': {which: 1, speed: -1},
-		'rotate': {which: 2, speed: 1},
-		'pinch': {which: 3, speed: 1},
-	};
-	this.speed[this.touch_map.rotate.which] = 0.001; // Rotate 1 rad/sec
-	this.speed[this.touch_map.pinch.which] = 0.001; // Zoom about 4x/sec
-	// Status variables
-	this.is_hammer_busy = false;
-	this.zoom_center = null;
+	// State variables
+	this.speed[0] = this.speed[1] = 0.002; // move 2 units/sec by default
+	this.position = [0, 0, 0, 0];
 	this.cos = 1;
 	this.sin = 0;
-	this.position[2] = this.position[3] = 0;
-	this.velocity[2] = this.velocity[3] = 0;
+	this.scale = 1;
+	this.units_per_px = 1;
 };
 
-MovableTouch.prototype = Object.create(Movable.prototype);
+Movable2D.prototype = Object.create(Movable.prototype);
 (function () {
-	this.options = this.options || {};
-	this.options.pan = {threshold: 0, pointers: 0};
-	this.options.rotate = {threshold: 0};
-	this.options.pinch = {threshold: 0};
-	this.bindTouch = function (element) {
-		var h = this.hammer;
-		var t = this;
-		if (!this.hammer) {
-			h = this.hammer = new Hammer.Manager($(element)[0]);
-			h.add(new Hammer.Pan(this.options.pan));
-			h.add(new Hammer.Rotate(this.options.rotate
-				).recognizeWith(h.get('pan')));
-			h.add(new Hammer.Pinch(this.options.pinch
-				).recognizeWith([h.get('pan'), h.get('rotate')]));
-			h.on('hammer.input', function (e) {
-				var prev = h.session.prevInput || e;
-				e.incTime = e.deltaTime - prev.deltaTime;
-				e.incX = e.deltaX - prev.deltaX;
-				e.incY = e.deltaY - prev.deltaY;
-				e.incScale = (e.scale / prev.scale) || 1.0;
-				// Clamp incremental rotations to [-90, 90];
-				// interpret obtuse rotations as swapped fingers.
-				var rot = (450 + e.rotation - prev.rotation) % 360 - 90;
-				if (rot > 90) { rot -= 180; }
-				e.incRotation = rot;
-				if (e.isFinal) { t.is_hammer_busy = false; }
-			});
-		}
-		this.hammer.on('pan rotate pinch', function (e) {
-			if (e.incTime) { // Only move if this isn't a duplicate event
-				// Incremental scaling is clamped for continuity.
-				var scl = e.incScale;
-				if (!(scl > 0.1 && scl < 10)) { scl = 1; }
-				// Move
-				t.movePan(e.incX, e.incY);
-				t.moveRotate(e.incRotation);
-				t.movePinch(scl);
-				// Set coasting velocities averaging over the last 100ms
-				var weight = Math.min(1, 0.01 * e.incTime);
-				t.touchVelocity('pan_x', e.incX / e.incTime, weight);
-				t.touchVelocity('pan_y', e.incY / e.incTime, weight);
-				t.touchVelocity('rotate', e.incRotation / e.incTime, weight);
-				t.touchVelocity('pinch', (scl - 1) / e.incTime, weight);
-			}
-			if (!e.isFinal) { t.is_hammer_busy = true; }
-			t.decay_rate = t.decay_coast;
-			t.motionCallback();
-		});
-		$(element).on('wheel DOMMouseScroll mousewheel', function (e) {
-			// Mousewheel zooming
-			e = e.originalEvent;
-			if (!(isNaN(e.pageX))) { t.zoom_center = [e.pageX, e.pageY]; }
-			var delta_y = e.wheelDelta || (-e.detail);
-			if (Math.abs(delta_y) > 20) { delta_y /= 120; }
-			t.decay_rate = t.decay_coast;
-			t.touchVelocity('pinch', delta_y);
-			t.motionCallback();
-		});
-		$(window).on('mouseup touchcancel touchend mouseleave touchleave',
-			function (e) {
-				if (!e.relatedTarget) { t.touchEnd(); }
-			});
-	};
-	this.bindKeyboard = function (element) {
-		var t = this;
-		Movable.prototype.bindKeyboard.apply(this, arguments);
-		$(element).on('keydown.mKeyboard', function (e) {
-			t.zoom_center = null;
-		});
-	};
-	this.isMoving = function () {
-		if (this.is_hammer_busy) { return false; }
-		return Movable.prototype.isMoving.apply(this, arguments);
-	};
-	this.movePan = function (x, y) {
-		this.position[this.touch_map.pan_x.which] -= this.cos * x + this.sin * y;
-		this.position[this.touch_map.pan_y.which] -= -this.sin * x + this.cos * y;
-	};
-	this.moveRotate = function (angle) {
-		this.position[this.touch_map.rotate.which] += angle;
-	};
-	this.movePinch = function (scale) {
-		this.position[this.touch_map.pinch.which] += (1 - scale);
+	this.move = function (dt) {
+		var s = 1 / this.units_per_px;
+		this.moveRotate(this.velocity[this.touch_map.rotate.which] * dt);
+		this.moveZoomWithCenter(this.velocity[this.touch_map.pinch.which] * dt);
+		this.movePan(this.velocity[this.touch_map.pan_x.which] * dt * s,
+			this.velocity[this.touch_map.pan_y.which] * dt * s);
 	};
 	this.moveReset = function () {
-		Movable.prototype.moveReset.call(this);
+		for (var i = 0; i < this.velocity.length; i++) {
+			this.position[i] = this.velocity[i] = 0;
+		}
 		this.cos = 1;
 		this.sin = 0;
+		this.scale = 1;
 	};
-	this.touchEnd = function () {
-		this.is_hammer_busy = false;
+	this.movePan = function (x, y) {
+		var ix = this.touch_map.pan_x.which;
+		var iy = this.touch_map.pan_y.which;
+		var s = this.units_per_px / this.scale;
+		x *= s;
+		y *= s;
+		this.position[ix] = this.position[ix] || 0;
+		this.position[iy] = this.position[iy] || 0;
+		this.position[ix] += this.cos * x + this.sin * y;
+		this.position[iy] += -this.sin * x + this.cos * y;
 	};
-	this.touchVelocity = function (key, value, weight) {
-		key = this.touch_map[key];
-		if (arguments.length > 1) {
-			if (isNaN(weight)) { weight = 1; }
-			this.velocity[key.which] *= 1 - weight;
-			this.velocity[key.which] += weight * value * key.speed;
+	this.moveRotate = function (angle) {
+		var i = this.touch_map.rotate.which;
+		var cx = 0;
+		var cy = 0;
+		if (this.zoom_center) {
+			cx = this.zoom_center[0] - this.screen_center[0];
+			cy = this.zoom_center[1] - this.screen_center[1];
 		}
-		return this.velocity[key];
+		this.position[i] = (this.position[i] || 0) + angle;
+		this.movePan(-cx, -cy);
+		this.cos = Math.cos(this.position[i]);
+		this.sin = Math.sin(this.position[i]);
+		this.movePan(cx, cy);
 	};
-}).call(MovableTouch.prototype);
+	this.moveZoom = function (amount) {
+		if (!isFinite(this.scale)) { this.scale = 1; }
+		this.scale *= Math.exp(amount || 0);
+	};
+	this.movePinch = function (scale) {
+		this.moveZoomWithCenter(Math.log(scale));
+	};
+	this.moveZoomWithCenter = function (amount) {
+		var cx = 0;
+		var cy = 0;
+		if (this.zoom_center && this.screen_center) {
+			cx = this.zoom_center[0] - this.screen_center[0];
+			cy = this.zoom_center[1] - this.screen_center[1];
+		}
+		this.movePan(-cx, -cy);
+		this.moveZoom(amount);
+		this.movePan(cx, cy);
+	};
+}).call(Movable2D.prototype);
 
-return MovableTouch;
+Movable["2D"] = Movable2D;
+
+
+var Movable3D = function () {
+	// Touch-richer variant of Movable. Requires hammer.js>=2.0.2.
+	Movable.apply(this, arguments);
+	// Set speeds
+	this.speed[0] = this.speed[1] = 0.001; // rotate 1 rad/s by default
+	this.speed[4] = 0.002; // fly at 2 units per second
+	// invert y-axis
+	this.key_map[this.KEYS.DOWN].amount *= -1;
+	this.key_map[this.KEYS.UP].amount *= -1;
+	// flying
+	this.key_map['press'] = this.key_map[this.KEYS.SPACE] = {which: 4, amount: 1};
+	this.key_map[this.KEYS.Z] = {which: 4, amount: -1};
+	// state variables
+	this.origin = null;
+	this.displacement = null;
+	this.rotation = null;
+	this.scale = 1;
+	// hmmmmmmmmmmmmmm
+	this.units_per_px = 1;
+	this.fly_center = [0, 0];
+};
+
+Movable3D.prototype = Object.create(Movable.prototype);
+(function () {
+	this.move = function (dt) {
+		// Rotation
+		if (this.keys_down['press']) {
+			this.velocity[0] = this.speed[0] * (this.fly_center[0] - this.screen_center[0]) * this.units_per_px;
+			this.velocity[1] = this.speed[1] * (this.fly_center[1] - this.screen_center[1]) * this.units_per_px;
+		}
+		this.moveRotateMix(0, 2, this.velocity[this.touch_map.pan_x.which] * dt);
+		this.moveRotateMix(1, 2, -this.velocity[this.touch_map.pan_y.which] * dt);
+		this.moveRotateMix(0, 1, this.velocity[this.touch_map.rotate.which] * dt);
+		// Translation
+		this.moveFly(dt * this.velocity[this.key_map.press.which]);
+		// Zooming
+		this.moveZoom(dt * this.velocity[this.touch_map.pinch.which]);
+	};
+	this.moveReset = function () {
+		this.origin = [0, 0, 0];
+		this.displacement = [0, 0, 0];
+		this.rotation = [
+			[1,0,0,0],
+			[0,1,0,0],
+			[0,0,1,0],
+			[0,0,0,1]
+		];
+	};
+	this.moveRotateMix = function (from, to, angle) {
+		// this.moveRoll = this.moveRotateMix.bind(this, 0, 1);
+		// this.moveYaw = this.moveRotateMix.bind(this, 0, 2);
+		// this.movePitch = this.moveRotateMix.bind(this, 1, 2);
+		angle = angle || 0;
+		var c = Math.cos(angle);
+		var s = Math.sin(angle);
+		var t = 0;
+		var x = this.rotation[from];
+		var y = this.rotation[to];
+		for (var i = 0; i < 4; i++) {
+			t = x[i] * c + y[i] * s;
+			y[i] = -x[i] * s + y[i] * c;
+			x[i] = t;
+		}
+	};
+	this.movePan = function (x, y) {
+		if (!this.keys_down['press']) {
+			this.moveRotateMix(2, 0, x * this.units_per_px);
+			this.moveRotateMix(1, 2, y * this.units_per_px);
+		}
+	};
+	this.moveRotate = function (angle) {
+		this.moveRotateMix(0, 1, angle);
+	};
+	this.moveZoom = function (amount) {
+		if (!isFinite(this.scale)) { this.scale = 1; }
+		this.scale *= Math.exp(amount || 0);
+	};
+	this.movePinch = function (scale) {
+		this.moveZoom(Math.log(scale));
+	};
+	this.moveFly = function (distance) {
+		if (!distance) { return; }
+		var d = distance / this.scale;
+		for (var i = 0; i < 3; i++) {
+			this.origin[i] += this.rotation[2][i] * d;
+		}
+	};
+	var isMovingSuper = this.isMoving;
+	this.isMoving = function () {
+		if (this.keys_down['press']) { return true; }
+		return isMovingSuper.call(this);
+	};
+	var touchEndSuper = this.touchEnd;
+	this.touchEnd = function () {
+		touchEndSuper.call(this);
+		this.keys_down['press'] = false;
+	};
+	var bindTouchSuper = this.bindTouch;
+	this.bindTouch = function (element) {
+		bindTouchSuper.call(this, element);
+		var h = this.hammer;
+		h.add(new Hammer.Press({threshold: 10}).recognizeWith(h.get('pan')));
+		h.on('press', (function (e) {
+			this.keys_down['press'] = true;
+			this.decay_rate = this.decay_coast;
+			this.motionCallback();
+		}).bind(this));
+		h.on('press pan', (function (e) {
+			this.fly_center[0] = e.center.x;
+			this.fly_center[1] = e.center.y;
+		}).bind(this));
+	};
+}).call(Movable3D.prototype);
+
+
+Movable["3D"] = Movable3D;
 
 })();
 

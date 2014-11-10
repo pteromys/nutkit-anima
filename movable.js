@@ -4,33 +4,35 @@ var global_object = this['Nuts'] || this;
 global_object['Movable'] = (function () {
 
 var Movable = function () {
-	this.velocity = [0, 0]; // velocity in user units (e.g. pixels/msec)
-	this.speed = [1, 1]; // speed scale in user units
+	this.velocity = [0, 0, 0, 0]; // velocity in user units (e.g. px/ms)
+	// Configuration
+	this.speed = [1, 1, 0.001, 0.001]; // speed scale in user units.
+		// Defaults: Move 1000px/s, rotate 1 rad/s, zoom 2.718x/s
 	this.key_map = {};
+	this.keys_down = {};
+	this.touch_map = {
+		'pan_x': {which: 0, amount: -1},
+		'pan_y': {which: 1, amount: -1},
+		'rotate': {which: 2, amount: 1},
+		'pinch': {which: 3, amount: 1},
+	};
+	// Keymap
 	this.key_map[this.KEYS.LEFT] = {which: 0, amount: -1};
 	this.key_map[this.KEYS.RIGHT] = {which: 0, amount: 1};
 	this.key_map[this.KEYS.UP] = {which: 1, amount: -1};
 	this.key_map[this.KEYS.DOWN] = {which: 1, amount: 1};
-	this.keys_down = {
-		"16": false,
-		"37": false,
-		"38": false,
-		"39": false,
-		"40": false,
-		"mouse": false,
-	};
-	this.last_taps = {
-		down: 0,
-		down_old: 0,
-		up: 0,
-		xy: [0, 0],
-		xy_old: [0, 0],
-	};
-	// Default implementation
-	this.position = [0, 0];
-	this.last_motion = [0, 0];
-	this.last_dt = this.default_dt;
+	this.key_map[this.KEYS['<']] = {which: 2, amount: -1}; // roll ACW
+	this.key_map[this.KEYS['>']] = {which: 2, amount: 1}; // roll CW
+	this.key_map[189] = this.key_map[173] = this.key_map[109] =
+		{which: 3, amount: -1}; // zoom out (gecko's had some weird keycodes)
+	this.key_map[187] = this.key_map[61] = this.key_map[107] =
+		{which: 3, amount: 1}; // zoom in
+
+	// State
 	this.decay_rate = this.decay_coast;
+	this.is_hammer_busy = false;
+	this.zoom_center = null;
+	this.screen_center = [0, 0];
 };
 
 Movable.prototype = {
@@ -48,38 +50,50 @@ Movable.prototype = {
 		"TILDE": 192,
 		"APOSTROPHE": 222,
 	},
-	DOUBLETAP_THRESHOLD: 300,
-	TAP_MOVE_THRESHOLD: 16,
-	default_dt: 16,
 	run_multiplier: 4,
 	decay_coast: 0.002, // stop in about 0.5s
 	decay_brake: 0.01, // stop in about 0.1s
+	overlay_selector: '.overlay',
+	default_dt: 16,
+	options: {
+		pan: {threshold: 0, pointers: 0},
+		rotate: {threshold: 0},
+		pinch: {threshold: 0},
+	},
 
 	updateVelocity: function (dt) {
 		dt = dt || this.default_dt;
 		var vmax = 1;
 		if (this.keys_down[this.KEYS.SHIFT]) { vmax *= this.run_multiplier; }
-		var m = this;
-		var clampAndDecay = function (t, i) {
-			var v_bound = vmax * (m.speed[i] || 1);
-			var decay = v_bound * m.decay_rate * dt;
-			if (t < -decay) { t += decay; }
-			else if (t > decay) { t -= decay; }
-			else { t = 0; }
-			return Math.max(-v_bound, Math.min(t, v_bound));
+		var decay_rate = this.decay_rate;
+		var accel_rate = this.decay_coast + this.decay_brake;
+		function decay(t, cap) {
+			var s = Math.abs(t);
+			var ds;
+			if (s > cap) {
+				return t * Math.max(0, 1 - dt * accel_rate);
+			} else {
+				ds = dt * cap * decay_rate;
+				if (t > ds) { return t - ds; }
+				else if (t < -ds) { return t + ds; }
+				else { return 0; }
+			}
 		};
 		if (this.canAccelerate()) {
 			for (var key in this.key_map) {
 				if (!this.key_map.hasOwnProperty(key)) { continue; }
 				var km = this.key_map[key];
-				this.velocity[km.which] = this.velocity[km.which] || 0;
+				var i = km.which;
+				this.velocity[i] = this.velocity[i] || 0;
 				if (this.keys_down[key]) {
-					this.velocity[km.which] +=
-						0.012 * vmax * (this.speed[km.which] || 1) * km.amount * dt;
+					this.velocity[i] +=
+						accel_rate * vmax * (this.speed[i] || 1) * km.amount * dt;
 				}
 			}
 		}
-		this.velocity = this.velocity.map(clampAndDecay);
+		for (var i = 0; i < this.velocity.length; i++) {
+			this.velocity[i] = decay(this.velocity[i], vmax * (this.speed[i] || 1));
+		}
 	},
 	update: function (dt) {
 		dt = this.last_dt = dt || this.default_dt;
@@ -90,6 +104,7 @@ Movable.prototype = {
 		}
 	},
 	isMoving: function () {
+		if (this.is_hammer_busy) { return false; }
 		for (var i = 0; i < this.velocity.length; i++) {
 			if (this.velocity[i]) { return true; }
 		}
@@ -110,6 +125,7 @@ Movable.prototype = {
 				motion_changed = !t.keys_down[e.which];
 				t.keys_down[e.which] = true;
 				t.decay_rate = t.decay_brake;
+				t.zoom_center = null;
 				if (motion_changed) { t.motionCallback(); }
 				// In theory since motionCallback calls requestAnimationFrame,
 				// I could call this callback at the start...
@@ -119,6 +135,7 @@ Movable.prototype = {
 			if (e.which == t.KEYS.ESC && t.canAccelerate()) {
 				t.moveReset();
 				t.decay_rate = t.decay_brake;
+				t.zoom_center = null;
 				t.motionCallback();
 			}
 		};
@@ -140,107 +157,112 @@ Movable.prototype = {
 		element.on('blur.mKeyboard mouseleave.mKeyboard', releaseAll);
 	},
 	bindTouch: function (element) {
+		var h = this.hammer;
 		var t = this;
-		var mousePress = function (e) {
-			if (!t.canAccelerate()) { return; }
-			if ($(e.target).is('a[href], input, select, textarea, button')) { return; }
-			if (!(e.originalEvent && e.originalEvent.touches && e.originalEvent.touches.length > 1)) {
-				e.preventDefault();
-			}
-			if (typeof(e.pageX) === 'undefined') {
-				e = e.originalEvent.touches[0];
-			}
-			t.keys_down['mouse'] = [e.pageX, e.pageY];
-			t.last_taps.down_old = t.last_taps.down;
-			t.last_taps.down = (new Date()).valueOf();
-			t.last_taps.xy_old = t.last_taps.xy;
-			t.last_taps.xy = [e.pageX, e.pageY];
-		};
-		var mouseRelease = function (e) {
-			if (e.type == 'mouseleave' && e.toElement) { return; }
-			// Check tap-motion threshold
-			if (!t.last_taps.xy.every(function (x, i) {
-					return Math.abs(x - t.keys_down['mouse'][i]) < t.TAP_MOVE_THRESHOLD;
-				}))
-			{
-				t.last_taps.down = NaN;
-			}
-			if (!t.last_taps.xy.every(function (x, i) {
-					return Math.abs(x - t.last_taps.xy_old[i]) < t.TAP_MOVE_THRESHOLD;
-				}))
-			{
-				t.last_taps.down_old = NaN;
-			}
-			// Check doubletap delay threshold
-			var now = (new Date()).valueOf();
-			if ([t.last_taps.down, t.last_taps.down_old, t.last_taps.up].every(
-				function (x) { return now - x < t.DOUBLETAP_THRESHOLD}))
-			{
-				t.moveReset();
-				t.motionCallback();
-			}
-			t.last_taps.up = now;
-			// Reset mouse position
-			t.keys_down['mouse'] = false;
-			// Set coasting velocity
-			t.moveCoast();
-		};
-		var mouseMove = function (e) {
-			if (!(e.originalEvent && e.originalEvent.touches && e.originalEvent.touches.length > 1)) {
-				if (t.canAccelerate()) {
-					e.preventDefault();
-				}
-			}
-			if (typeof(e.pageX) === 'undefined') {
-				e = e.originalEvent.touches[0];
-			}
-			// Check that the mouse is down and update position
-			var p = t.keys_down['mouse'];
-			if (!p) { return; }
-			var q = [e.pageX, e.pageY];
-			t.keys_down['mouse'] = q;
-			// Quit early if no motion or if any dialogs are active
-			if (p[0] == q[0] && p[1] == q[1]) { return; }
-			if (!t.canAccelerate()) { return; }
-			t.moveFromTo(p, q);
+		var last = null;
+		var last_pointers = null;
+		$(element).on('wheel DOMMouseScroll mousewheel', function (e) {
+			// Mousewheel zooming
+			e = e.originalEvent;
+			if (!(isNaN(e.pageX))) { t.zoom_center = [e.pageX, e.pageY]; }
+			var delta_y = e.wheelDelta || (-e.detail);
+			if (Math.abs(delta_y) > 20) { delta_y /= 120; }
+			t.decay_rate = t.decay_coast;
+			t.touchVelocity('pinch', delta_y/400, 0.5);
 			t.motionCallback();
-		};
-		element = $(element);
-		element.on('mousedown.mMouse touchstart.mMouse', mousePress);
-		element.on('blur.mMouse mouseup.mMouse mouseleave.mMouse touchend.mMouse touchcancel.mMouse', mouseRelease);
-		element.on('mousemove.mMouse touchmove.mMouse', mouseMove);
+		});
+		t.setScreenCenter(element);
+		$(window).on('load scroll resize', function (e) {
+			t.setScreenCenter(element);
+		});
+		$(element).on('mousedown selectstart', function (e) {
+			e.preventDefault();
+		});
+		$(window).on('mouseup touchcancel touchend mouseleave touchleave',
+			function (e) {
+				if (!e.relatedTarget) { t.touchEnd(); }
+			});
+		if (Hammer && !this.hammer) {
+			h = this.hammer = new Hammer.Manager($(element)[0]);
+			h.add(new Hammer.Pan(this.options.pan));
+			h.add(new Hammer.Rotate(this.options.rotate
+				).recognizeWith(h.get('pan')));
+			h.add(new Hammer.Pinch(this.options.pinch
+				).recognizeWith([h.get('pan'), h.get('rotate')]));
+			h.on('hammer.input', function (e) {
+				var prev = h.session.prevInput || e;
+				e.incTime = e.deltaTime - prev.deltaTime;
+				e.incX = e.deltaX - prev.deltaX;
+				e.incY = e.deltaY - prev.deltaY;
+				e.incScale = (e.scale / prev.scale) || 1.0;
+				// Clamp incremental rotations to [-90, 90];
+				// interpret obtuse rotations as swapped fingers.
+				var rot = (450 + e.rotation - prev.rotation) % 360 - 90;
+				if (rot > 90) { rot -= 180; }
+				e.incRotation = rot * Math.PI / 180;
+				t.is_hammer_busy = !(e.isFinal);
+				t.decay_rate = t.decay_coast;
+				t.zoom_center = [e.center.x, e.center.y];
+			});
+			this.hammer.on('pan rotate pinch', function (e) {
+				// Duplicate events are still causing some bugs here...
+				if (last == e.timeStamp) { return; }
+				last = e.timeStamp;
+				if (e.incTime && (last_pointers == e.pointers.length)) { // Only move if this isn't a duplicate event
+					// Incremental scaling is clamped for continuity.
+					var scl = e.incScale;
+					if (!(scl > 0.1 && scl < 10)) { scl = 1; }
+					// Move
+					t.movePinch(scl);
+					t.moveRotate(e.incRotation);
+					t.movePan(e.incX, e.incY);
+					// Set coasting velocities averaging over the last 100ms
+					var weight = Math.min(1, 0.01 * e.incTime);
+					t.touchVelocity('pan_x', e.incX / e.incTime, weight);
+					t.touchVelocity('pan_y', e.incY / e.incTime, weight);
+					t.touchVelocity('rotate', e.incRotation / e.incTime, weight);
+					t.touchVelocity('pinch', (scl - 1) / e.incTime, weight);
+				}
+				last_pointers = e.pointers.length;
+				if (!e.isFinal) { t.is_hammer_busy = true; }
+				else {
+					last = null;
+					last_pointers = null;
+				}
+				t.decay_rate = t.decay_coast;
+				t.motionCallback();
+			});
+		}
+	},
+	touchVelocity: function (key, value, weight) {
+		key = this.touch_map[key];
+		if (!key) { return; }
+		if (!isNaN(value)) {
+			if (isNaN(weight)) { weight = 1; }
+			this.velocity[key.which] *= 1 - weight;
+			this.velocity[key.which] += weight * value * key.amount;
+		}
+		return this.velocity[key.which];
+	},
+	touchEnd: function () {
+		this.is_hammer_busy = false;
+	},
+	setScreenCenter: function (element) {
+		var p = $(element).offset();
+		this.screen_center = [
+			p.top - $(window).scrollLeft() + $(element).width()/2,
+			p.left - $(window).scrollTop() + $(element).height()/2,
+		];
 	},
 
 	// Default implementation
 	canAccelerate: function () {
-		return true;
-	},
-	move: function (dt) {
-		for (var i = 0; i < this.velocity.length; i++) {
-			this.position[i] = this.position[i] || 0;
-			this.position[i] += this.velocity[i] * dt;
-		}
-	},
-	moveReset: function () {
-		for (var i = 0; i < this.velocity.length; i++) {
-			this.position[i] = this.velocity[i] = 0;
-		}
-	},
-	moveFromTo: function (a, b) {
-		this.position[0] += this.last_motion[0] = a[0] - b[0];
-		this.position[1] += this.last_motion[1] = a[1] - b[1];
-	},
-	moveCoast: function () {
-		if (this.last_dt && this.last_motion) {
-			this.decay_rate = this.decay_coast;
-			this.velocity[0] = this.last_motion[0] / this.last_dt;
-			this.velocity[1] = this.last_motion[1] / this.last_dt;
-			this.last_motion[0] = 0;
-			this.last_motion[1] = 0;
-		}
+		// Don't accelerate if a dialog is active.
+		return !($(this.overlay_selector).is(':target'));
 	},
 	motionCallback: function () {},
 };
+
 
 return Movable;
 
