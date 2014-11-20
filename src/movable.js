@@ -1,7 +1,6 @@
-(function () {
-
-var global_object = this['Nuts'] || this;
-global_object['Movable'] = (function () {
+var KEYS = require('./keys.js');
+var $ = require('jquery');
+var Hammer = require('hammer');
 
 var Movable = function () {
 	this.velocity = [0, 0, 0, 0]; // velocity in user units (e.g. px/ms)
@@ -15,14 +14,15 @@ var Movable = function () {
 		'pan_y': {which: 1, amount: -1},
 		'rotate': {which: 2, amount: 1},
 		'pinch': {which: 3, amount: 1},
+		'wheel': {which: 3, amount: 1},
 	};
 	// Keymap
-	this.key_map[this.KEYS.LEFT] = {which: 0, amount: -1};
-	this.key_map[this.KEYS.RIGHT] = {which: 0, amount: 1};
-	this.key_map[this.KEYS.UP] = {which: 1, amount: -1};
-	this.key_map[this.KEYS.DOWN] = {which: 1, amount: 1};
-	this.key_map[this.KEYS['<']] = {which: 2, amount: -1}; // roll ACW
-	this.key_map[this.KEYS['>']] = {which: 2, amount: 1}; // roll CW
+	this.key_map[KEYS.LEFT] = {which: 0, amount: -1};
+	this.key_map[KEYS.RIGHT] = {which: 0, amount: 1};
+	this.key_map[KEYS.UP] = {which: 1, amount: -1};
+	this.key_map[KEYS.DOWN] = {which: 1, amount: 1};
+	this.key_map[KEYS['<']] = {which: 2, amount: -1}; // roll ACW
+	this.key_map[KEYS['>']] = {which: 2, amount: 1}; // roll CW
 	this.key_map[189] = this.key_map[173] = this.key_map[109] =
 		{which: 3, amount: -1}; // zoom out (gecko's had some weird keycodes)
 	this.key_map[187] = this.key_map[61] = this.key_map[107] =
@@ -36,20 +36,6 @@ var Movable = function () {
 };
 
 Movable.prototype = {
-	KEYS: {
-		"SHIFT": 16,
-		"ESC": 27,
-		"SPACE": 32,
-		"LEFT": 37,
-		"UP": 38,
-		"RIGHT": 39,
-		"DOWN": 40,
-		"<": 188,
-		">": 190,
-		"QUESTION": 191,
-		"TILDE": 192,
-		"APOSTROPHE": 222,
-	},
 	run_multiplier: 4,
 	decay_coast: 0.002, // stop in about 0.5s
 	decay_brake: 0.01, // stop in about 0.1s
@@ -64,7 +50,7 @@ Movable.prototype = {
 	updateVelocity: function (dt) {
 		dt = dt || this.default_dt;
 		var vmax = 1;
-		if (this.keys_down[this.KEYS.SHIFT]) { vmax *= this.run_multiplier; }
+		if (this.keys_down[KEYS.SHIFT]) { vmax *= this.run_multiplier; }
 		var decay_rate = this.decay_rate;
 		var accel_rate = this.decay_coast + this.decay_brake;
 		function decay(t, cap) {
@@ -131,8 +117,8 @@ Movable.prototype = {
 				// I could call this callback at the start...
 				// ...but that'd be poking through the abstraction barrier.
 			}
-			t.keys_down[t.KEYS.SHIFT] = e.shiftKey;
-			if (e.which == t.KEYS.ESC && t.canAccelerate()) {
+			t.keys_down[KEYS.SHIFT] = e.shiftKey;
+			if (e.which == KEYS.ESC && t.canAccelerate()) {
 				t.moveReset();
 				t.decay_rate = t.decay_brake;
 				t.zoom_center = null;
@@ -141,7 +127,7 @@ Movable.prototype = {
 		};
 		var release = function (e) {
 			if (t.keys_down[e.which]) { t.keys_down[e.which] = false; }
-			t.keys_down[t.KEYS.SHIFT] = e.shiftKey;
+			t.keys_down[KEYS.SHIFT] = e.shiftKey;
 		};
 		var releaseAll = function (e) {
 			if (e.type == 'mouseleave' && e.toElement) { return; }
@@ -168,7 +154,7 @@ Movable.prototype = {
 			var delta_y = e.wheelDelta || (-e.detail);
 			if (Math.abs(delta_y) > 20) { delta_y /= 120; }
 			t.decay_rate = t.decay_coast;
-			t.touchVelocity('pinch', delta_y/400, 0.5);
+			t.touchVelocity('wheel', delta_y/400, 0.5);
 			t.motionCallback();
 		});
 		t.setScreenCenter(element);
@@ -263,13 +249,4 @@ Movable.prototype = {
 	motionCallback: function () {},
 };
 
-
-return Movable;
-
-})();
-
-if (global_object['KEYS']) {
-	global_object['Movable'].prototype['KEYS'] = global_object['KEYS'];
-}
-
-})();
+module.exports = Movable;

@@ -1,8 +1,3 @@
-(function () {
-
-var global_object = this['Nuts'] || this;
-global_object['FrameManager'] = (function () {
-
 var nativeRequestAnimFrame =
 	window.requestAnimationFrame ||
 	window.webkitRequestAnimationFrame ||
@@ -108,8 +103,4 @@ FrameManager.LOD.prototype = {
 	down: function () { this.frame_manager.downLOD(); },
 };
 
-return FrameManager;
-
-})();
-
-})();
+module.exports = FrameManager;

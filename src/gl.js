@@ -1,7 +1,4 @@
-(function () {
-
-var global_object = this['Nuts'] || this;
-global_object['GLWrapper'] = (function () {
+var $ = require('jquery');
 
 var GLWrapper = function (canvas) {
 	// Declare some properties
@@ -133,8 +130,4 @@ GLWrapper.prototype = {
 	},
 };
 
-return GLWrapper;
-
-})();
-
-})();
+module.exports = GLWrapper;
