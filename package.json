@@ -19,12 +19,13 @@
   { "browserify": "~6.3"
   , "browserify-shim": "~3.8"
   , "watchify": ">=2.1.0"
-  , "uglifyjs": ">=2.3"
+  , "uglify-js": ">=2.3"
+  , "exorcist": ">=0.1"
   }
 , "scripts":
-  { "build": "browserify src/anima.js -d -s Anima -o dist/anima.js"
+  { "build": "browserify src/anima.js -d -s Anima | exorcist dist/anima.js.map > dist/anima.js"
   , "watch": "watchify src/anima.js -d -s Anima -o dist/anima.js -v"
-  , "minify": "uglifyjs dist/anima.js -c > dist/anima.min.js"
+  , "minify": "uglifyjs dist/anima.js -c --in-source-map dist/anima.js.map --source-map dist/anima.min.js.map --source-map-url anima.min.js.map -o dist/anima.min.js"
   }
 , "browserify":
   { "transform": [ "browserify-shim" ]
