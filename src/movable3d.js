@@ -31,9 +31,7 @@ Movable3D.prototype = Object.create(Movable.prototype);
 			this.velocity[0] = this.speed[0] * (this.fly_center[0] - this.screen_center[0]) * this.units_per_px;
 			this.velocity[1] = this.speed[1] * (this.fly_center[1] - this.screen_center[1]) * this.units_per_px;
 		}
-		this.moveRotateMix(0, 2, this.velocity[this.touch_map.pan_x.which] * dt);
-		this.moveRotateMix(1, 2, -this.velocity[this.touch_map.pan_y.which] * dt);
-		this.moveRotateMix(0, 1, this.velocity[this.touch_map.rotate.which] * dt);
+		this.moveRotateByVelocity(dt);
 		// Translation
 		this.moveFly(dt * this.velocity[this.key_map.press.which]);
 		// Zooming
@@ -48,6 +46,11 @@ Movable3D.prototype = Object.create(Movable.prototype);
 			[0,0,1,0],
 			[0,0,0,1]
 		];
+	};
+	this.moveRotateByVelocity = function (dt) {
+		this.moveRotateMix(0, 2, this.velocity[this.touch_map.pan_x.which] * dt);
+		this.moveRotateMix(1, 2, -this.velocity[this.touch_map.pan_y.which] * dt);
+		this.moveRotateMix(0, 1, this.velocity[this.touch_map.rotate.which] * dt);
 	};
 	this.moveRotateMix = function (from, to, angle) {
 		// this.moveRoll = this.moveRotateMix.bind(this, 0, 1);
