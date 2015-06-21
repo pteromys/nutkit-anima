@@ -2,7 +2,7 @@
 
 , "private": true
 
-, "version": "0.0.1"
+, "version": "0.1.0"
 , "description": "Tools shared by pteromys's visualizations."
 , "keywords": ["canvas", "webgl", "visualization"]
 , "homepage": "http://pteromys.github.io/"
