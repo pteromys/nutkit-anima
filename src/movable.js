@@ -236,8 +236,8 @@ Movable.prototype = {
 	setScreenCenter: function (element) {
 		var p = $(element).offset();
 		this.screen_center = [
-			p.top - $(window).scrollLeft() + $(element).width()/2,
-			p.left - $(window).scrollTop() + $(element).height()/2,
+			p.left - $(window).scrollLeft() + $(element).width()/2,
+			p.top - $(window).scrollTop() + $(element).height()/2,
 		];
 	},
 
