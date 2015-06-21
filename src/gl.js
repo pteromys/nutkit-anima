@@ -4,6 +4,7 @@ var GLWrapper = function (canvas) {
 	// Declare some properties
 	this.gl = null;
 	this.shaderSources = {};
+	this.context_serial = 0;
 	this.shaders = {};
 	// Set bound methods
 	this.handleContextLost = this.handleContextLost.bind(this);
@@ -29,6 +30,7 @@ GLWrapper.prototype = {
 			throw 'WebGL unavailable.';
 			return false;
 		}
+		this.context_serial++;
 		// Handle context loss
 		this.canvas.addEventListener('webglcontextlost',
 			this.handleContextLost, false);
@@ -55,7 +57,7 @@ GLWrapper.prototype = {
 	// Context events
 	handleContextLost: function (e) {
 		e.preventDefault();
-		e.target.removeEventListener('webglcontextlost',
+		this.canvas.removeEventListener('webglcontextlost',
 			this.handleContextLost, false);
 	},
 	handleContextRestored: function (e) {
