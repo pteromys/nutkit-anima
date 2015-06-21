@@ -3,9 +3,10 @@ var $ = require('jquery');
 var GLWrapper = function (canvas) {
 	// Declare some properties
 	this.gl = null;
-	this.shaderSources = {};
 	this.context_serial = 0;
+	this.shader_sources = {};
 	this.shaders = {};
+	this.projection_matrix = new Float32Array(16);
 	// Set bound methods
 	this.handleContextLost = this.handleContextLost.bind(this);
 	this.handleContextRestored = this.handleContextRestored.bind(this);
@@ -37,7 +38,7 @@ GLWrapper.prototype = {
 		this.canvas.addEventListener('webglcontextrestored',
 			this.handleContextRestored, false);
 		// Set up shaders
-		for (var name in this.shaderSources) {
+		for (var name in this.shader_sources) {
 			this.linkProgram(name);
 		}
 		this.setupCallback();
@@ -68,15 +69,16 @@ GLWrapper.prototype = {
 	// Internals //
 	///////////////
 
-    projectionMatrix: function (w, h, n, f) {
+    setProjectionMatrix: function (w, h, n, f) {
 		// Generate a projection matrix toward 0 onto a rectangle at z = 1.
 		// Matrix entries by column left-to-right, down each column.
-		return new Float32Array([
-			1/w, 0, 0, 0,
-			0, 1/h, 0, 0,
-			0, 0, (n+f)/(n-f), -1, // new z
-			0, 0, 2*n*f/(n-f), 0, // old z becomes last coordinate for division
-		]);
+		var m = this.projection_matrix;
+		m[0] = 1/w;
+		m[5] = 1/h;
+		m[10] = (n+f)/(n-f); // new z
+		m[11] = -1;
+		m[14] = 2*n*f/(n-f); // old z becomes last coordinate for division
+		m[1] = m[2] = m[3] = m[4] = m[6] = m[7] = m[8] = m[9] = m[12] = m[13] = m[15] = 0;
 	},
 
 	// Shader loading
@@ -85,7 +87,7 @@ GLWrapper.prototype = {
 		//     name = symbolic name
 		//     vert = code for the vertex shader
 		//     frag = code for the fragment shader
-		this.shaderSources[name] = [vert, frag];
+		this.shader_sources[name] = [vert, frag];
 		if (this.gl) { this.linkProgram(name); }
 	},
 	addProgramByURLs: function (name, vert, frag, callback) {
@@ -105,7 +107,7 @@ GLWrapper.prototype = {
 		$.get(frag, tryCompiling.bind(this, 1));
 	},
 	linkProgram: function (name) {
-		if (!this.shaderSources[name]) { return null; }
+		if (!this.shader_sources[name]) { return null; }
 		var gl = this.gl;
 		var TYPES = [gl.VERTEX_SHADER, gl.FRAGMENT_SHADER];
 		function compile(source, i) {
@@ -118,7 +120,7 @@ GLWrapper.prototype = {
 			}
 			return ans;
 		}
-		var objs = this.shaderSources[name].map(compile);
+		var objs = this.shader_sources[name].map(compile);
 		var prog = gl.createProgram();
 		gl.attachShader(prog, objs[0]);
 		gl.attachShader(prog, objs[1]);
